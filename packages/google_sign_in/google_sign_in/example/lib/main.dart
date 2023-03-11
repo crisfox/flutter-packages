@@ -7,17 +7,24 @@
 import 'dart:async';
 import 'dart:convert' show json;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
+import 'package:google_sign_in_web/google_sign_in_web.dart' as web;
 import 'package:http/http.dart' as http;
+
+import 'web_eye_candy.dart';
+
+const List<String> scopes = <String>[
+  'email',
+  'https://www.googleapis.com/auth/contacts.readonly',
+];
 
 GoogleSignIn _googleSignIn = GoogleSignIn(
   // Optional clientId
   // clientId: '479882132969-9i9aqik3jfjd7qhci1nqf0bm2g71rm1u.apps.googleusercontent.com',
-  scopes: <String>[
-    'email',
-    'https://www.googleapis.com/auth/contacts.readonly',
-  ],
+  scopes: scopes,
 );
 
 void main() {
@@ -37,20 +44,32 @@ class SignInDemo extends StatefulWidget {
 }
 
 class SignInDemoState extends State<SignInDemo> {
-  GoogleSignInAccount? _currentUser;
+  GoogleSignInAccount? _currentUser; // is signed-in?
+  bool _isAuthorized = false; // has granted permissions?
+  web.ButtonConfiguration? _buttonConfiguration;// = web.ButtonConfiguration(
+    // type: web.ButtonType.standard,
+  //);
   String _contactText = '';
 
   @override
   void initState() {
     super.initState();
-    _googleSignIn.onCurrentUserChanged.listen((GoogleSignInAccount? account) {
+    _googleSignIn.onCurrentUserChanged.listen((GoogleSignInAccount? account) async {
+      // Check if the account can access scopes...
+      bool isAuthorized = false;
+      if (account != null) {
+        final String? accessToken = (await account.authentication).idToken;
+        isAuthorized = await _googleSignIn.canAccessScopes(accessToken, scopes);
+      }
       setState(() {
         _currentUser = account;
+        _isAuthorized = isAuthorized;
       });
-      if (_currentUser != null) {
-        _handleGetContact(_currentUser!);
+      if (isAuthorized) {
+        _handleGetContact(account!);
       }
     });
+
     _googleSignIn.signInSilently();
   }
 
@@ -111,11 +130,46 @@ class SignInDemoState extends State<SignInDemo> {
     }
   }
 
+  Future<void> _handleAuthorizeScopes() async {
+    // requestScopes should also fire a new user notification when scopes/tokens change.
+    final bool isAuthorized = await _googleSignIn.requestScopes(scopes);
+    setState(() {
+      _isAuthorized = isAuthorized;
+    });
+    if (isAuthorized) {
+      _handleGetContact(_currentUser!);
+    }
+  }
+
   Future<void> _handleSignOut() => _googleSignIn.disconnect();
+
+  void _handleNewWebButtonConfiguration (web.ButtonConfiguration newConfig) {
+    setState(() {
+      _buttonConfiguration = newConfig;
+    });
+  }
 
   Widget _buildBody() {
     final GoogleSignInAccount? user = _currentUser;
-    if (user != null) {
+    if (user == null) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: <Widget>[
+          const Text('You are not currently signed in.'),
+          if (kIsWeb) ...<Widget>[
+            (GoogleSignInPlatform.instance as web.GoogleSignInPlugin).renderButton(
+              configuration: _buttonConfiguration,
+            ),
+            renderWebButtonConfiguration(_buttonConfiguration, onChange: _handleNewWebButtonConfiguration),
+          ],
+          if (!kIsWeb)
+            ElevatedButton(
+              onPressed: _handleSignIn,
+              child: const Text('SIGN IN'),
+            ),
+        ],
+      );
+    } else {
       return Column(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: <Widget>[
@@ -127,25 +181,23 @@ class SignInDemoState extends State<SignInDemo> {
             subtitle: Text(user.email),
           ),
           const Text('Signed in successfully.'),
-          Text(_contactText),
+          if (_isAuthorized) ...<Widget>[
+            Text(_contactText),
+            ElevatedButton(
+              child: const Text('REFRESH'),
+              onPressed: () => _handleGetContact(user),
+            ),
+          ],
+          if (!_isAuthorized) ...<Widget>[
+            const Text('Additional permissions needed to read your contacts.'),
+            ElevatedButton(
+              onPressed: _handleAuthorizeScopes,
+              child: const Text('REQUEST PERMISSIONS'),
+            ),
+          ],
           ElevatedButton(
             onPressed: _handleSignOut,
             child: const Text('SIGN OUT'),
-          ),
-          ElevatedButton(
-            child: const Text('REFRESH'),
-            onPressed: () => _handleGetContact(user),
-          ),
-        ],
-      );
-    } else {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: <Widget>[
-          const Text('You are not currently signed in.'),
-          ElevatedButton(
-            onPressed: _handleSignIn,
-            child: const Text('SIGN IN'),
           ),
         ],
       );

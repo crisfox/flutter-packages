@@ -264,8 +264,8 @@ class GoogleSignIn {
   Stream<GoogleSignInAccount?> get onCurrentUserChanged =>
       _currentUserController.stream;
 
-  // Future that completes when we've finished calling `init` on the native side
-  Future<void>? _initialization;
+  // Ensure _ensureInitialized fully runs only the first time.
+  bool _initialized = false;
 
   Future<GoogleSignInAccount?> _callMethod(
       Future<dynamic> Function() method) async {
@@ -286,20 +286,27 @@ class GoogleSignIn {
     return _currentUser;
   }
 
-  Future<void> _ensureInitialized() {
-    return _initialization ??=
-        GoogleSignInPlatform.instance.initWithParams(SignInInitParameters(
-      signInOption: signInOption,
-      scopes: scopes,
-      hostedDomain: hostedDomain,
-      clientId: clientId,
-      serverClientId: serverClientId,
-      forceCodeForRefreshToken: forceCodeForRefreshToken,
-    ))
-          ..catchError((dynamic _) {
-            // Invalidate initialization if it errors out.
-            _initialization = null;
-          });
+  Future<void> _ensureInitialized() async {
+    if (_initialized) {
+      return;
+    }
+    await GoogleSignInPlatform.instance.initWithParams(SignInInitParameters(
+        signInOption: signInOption,
+        scopes: scopes,
+        hostedDomain: hostedDomain,
+        clientId: clientId,
+        serverClientId: serverClientId,
+        forceCodeForRefreshToken: forceCodeForRefreshToken,
+      ));
+
+    // Connect the userDataEvents Stream to the core plugin, if it exists.
+    GoogleSignInPlatform.instance.userDataEvents
+      ?.map((GoogleSignInUserData? userData) {
+        return userData != null ? GoogleSignInAccount._(this, userData) : null;
+      })
+      .forEach(_setCurrentUser);
+
+    _initialized = true;
   }
 
   /// The most recently scheduled method call.
@@ -423,5 +430,11 @@ class GoogleSignIn {
   Future<bool> requestScopes(List<String> scopes) async {
     await _ensureInitialized();
     return GoogleSignInPlatform.instance.requestScopes(scopes);
+  }
+
+  /// Checks if the given `accessToken` authorized to access all `scopes`.
+  Future<bool> canAccessScopes(String? accessToken, List<String> scopes) async {
+    await _ensureInitialized();
+    return GoogleSignInPlatform.instance.canAccessScopes(accessToken, scopes);
   }
 }
